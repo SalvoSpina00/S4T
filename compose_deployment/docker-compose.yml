@@ -158,21 +158,14 @@ services:
       - "3306:3306"
     volumes:
       - unime_iotronic_db_data:/var/lib/mysql
+      - ./entrypoint.sh:/entrypoint.sh
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-punime"]
       interval: 10s
       retries: 5
       start_period: 40s
       timeout: 5s
-    command: >
-      mysqld
-      --bind-address=0.0.0.0
-      --max_connections=4096
-      --collation-server=utf8_general_ci
-      --character-set-server=utf8
-      --innodb-buffer-pool-size=1G
-      --innodb-flush-log-at-trx-commit=1
-      --innodb-file-per-table=1
+    command: ["/bin/bash", "/entrypoint.sh"] 
 
           
   rabbitmq:
