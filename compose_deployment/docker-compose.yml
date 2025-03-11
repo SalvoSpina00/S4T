@@ -122,7 +122,7 @@ services:
       - s4t
     ports:
       - "8080:8080"
-      - "50000-50100:50000-50100"
+      - "50001-50100:50001-50100"
     volumes:
       - iotronic_ssl:/var/lib/iotronic/ssl
     entrypoint: ["/bin/sh", "-c"]
@@ -164,17 +164,55 @@ services:
       retries: 5
       start_period: 40s
       timeout: 5s
-    command: >
-      mysqld
-      --bind-address=0.0.0.0
-      --max_connections=4096
-      --collation-server=utf8_general_ci
-      --character-set-server=utf8
-      --innodb-buffer-pool-size=1G
-      --innodb-flush-log-at-trx-commit=1
-      --innodb-file-per-table=1
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -e
 
-          
+        echo "Verifica inizializzazione del database..."
+        if [ ! -d "/var/lib/mysql/mysql" ]; then
+            echo "Inizializzazione del database in corso..."
+            mysql_install_db --user=mysql --ldata=/var/lib/mysql
+        fi
+
+        echo "Avvio di MariaDB..."
+        mysqld_safe --bind-address=0.0.0.0 \
+               --max_connections=4096 \
+               --collation-server=utf8_general_ci \
+               --character-set-server=utf8 \
+               --innodb-buffer-pool-size=1G \
+               --innodb-flush-log-at-trx-commit=1 \
+               --innodb-file-per-table=1 &
+        PID_MYSQL=$!
+
+        echo "Attesa che MariaDB sia pronto..."
+        while ! mysqladmin ping -h "localhost" --silent; do
+            echo "MariaDB non ancora pronto. Controllo i log..."
+            sleep 2
+        done
+
+        echo "MariaDB è pronto. Verifica database..."
+
+        if mysql -uroot -p${MYSQL_ROOT_PASSWORD} -e "USE ${MYSQL_DATABASE};" 2>/dev/null; then
+            echo "Il database '${MYSQL_DATABASE}' esiste già."
+        else
+            echo "Creazione del database e dell'utente..."
+            mysql -uroot -p${MYSQL_ROOT_PASSWORD} <<EOF
+        CREATE DATABASE IF NOT EXISTS ${MYSQL_DATABASE};
+        CREATE USER IF NOT EXISTS '${MYSQL_USER}'@'%' IDENTIFIED BY '${MYSQL_PASSWORD}';
+        CREATE USER 'root'@'%' IDENTIFIED BY 'unime';
+        GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION;
+        GRANT ALL PRIVILEGES ON keystone.* TO 'root'@'%';
+        GRANT ALL PRIVILEGES ON iotronic.* TO 'root'@'%';
+        GRANT ALL PRIVILEGES ON ${MYSQL_DATABASE}.* TO '${MYSQL_USER}'@'%';
+        FLUSH PRIVILEGES;
+        EOF
+        fi
+
+        echo "MariaDB avviato correttamente!"
+        wait $$PID_MYSQL
+
+
   rabbitmq:
     image: rabbitmq:3.7-management
     container_name: rabbitmq
@@ -263,11 +301,12 @@ services:
       timeout: 5s
       retries: 5
       start_period: 60s
-    command: >
+    command: |
       /bin/bash -c "
+
       echo '[INFO] Attesa del database Keystone...';
       chmod 777 /var/log/keystone/keystone-manage.log;
-      export ${DB_CONNECTION_KEYSTONE};
+      export DB_CONNECTION_STRING=\"${DB_CONNECTION_KEYSTONE}\";
       until mysql -h iotronic-db -uroot -punime -e 'SELECT 1' >/dev/null 2>&1; do
         echo '[INFO] Database non ancora pronto, riprovo...';
         sleep 5;
@@ -275,13 +314,15 @@ services:
       echo '[INFO] Database pronto!';
 
       echo '[INFO] Configurazione del database Keystone...';
-      mysql -u root -punime -h iotronic-db -e \"CREATE DATABASE IF NOT EXISTS keystone;
+      mysql -u root -punime -h iotronic-db <<EOF
+      CREATE DATABASE IF NOT EXISTS keystone;
       CREATE DATABASE IF NOT EXISTS iotronic;
       CREATE USER IF NOT EXISTS 'keystone'@'%' IDENTIFIED BY 'unime';
       CREATE USER IF NOT EXISTS 'iotronic'@'%' IDENTIFIED BY 'unime';
       GRANT ALL PRIVILEGES ON keystone.* TO 'keystone'@'%';
       GRANT ALL PRIVILEGES ON iotronic.* TO 'iotronic'@'%';
-      FLUSH PRIVILEGES;\"
+      FLUSH PRIVILEGES;
+      EOF
 
       
       echo '[INFO] Creazione delle cartelle per le chiavi Fernet e credenziali...';
