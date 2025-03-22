@@ -305,6 +305,7 @@ services:
       /bin/bash -c "
 
       echo '[INFO] Attesa del database Keystone...';
+      chown -R keystone:keystone /var/log/keystone
       chmod 777 /var/log/keystone/keystone-manage.log;
       export DB_CONNECTION_STRING=\"${DB_CONNECTION_KEYSTONE}\";
       until mysql -h iotronic-db -uroot -punime -e 'SELECT 1' >/dev/null 2>&1; do
